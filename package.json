@@ -1,0 +1,12 @@
+{
+  "name": "parkrun-strava-oauth",
+  "version": "1.0.0",
+  "description": "Strava OAuth handler for Parkrun → Strava",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
