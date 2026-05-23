@@ -77,6 +77,34 @@ function exchangeCodeForTokens(code) {
   });
 }
 
+// Fetches the full athlete profile using the access token.
+// This includes the email address which Strava omits from the token response.
+function fetchAthleteProfile(accessToken) {
+  return new Promise((resolve, reject) => {
+    const options = {
+      hostname: 'www.strava.com',
+      path:     '/api/v3/athlete',
+      method:   'GET',
+      headers:  { Authorization: 'Bearer ' + accessToken },
+    };
+
+    const req = https.request(options, res => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          resolve(JSON.parse(data));
+        } else {
+          reject(new Error('Failed to fetch athlete profile: ' + data));
+        }
+      });
+    });
+
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 // Sends the token data to Apps Script to store in PropertiesService.
 function sendTokensToAppsScript(email, accessToken, refreshToken, expiresAt, athleteId) {
   return new Promise((resolve, reject) => {
@@ -342,12 +370,14 @@ const server = http.createServer(async (req, res) => {
     try {
       // Exchange code for tokens
       const data    = await exchangeCodeForTokens(params.code);
-      const athlete = data.athlete;
+
+      // Fetch full athlete profile — Strava often omits email from token response
+      const athlete = await fetchAthleteProfile(data.access_token);
       const email   = athlete.email;
 
       if (!email) {
         res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end(errorPage('Strava did not return your email address. Please ensure your Strava account has a verified email.'));
+        res.end(errorPage('Your Strava account does not have a verified email address. Please add one at strava.com/settings/profile and try again.'));
         return;
       }
 
