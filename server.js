@@ -36,7 +36,7 @@ function getStravaAuthUrl() {
     + '&redirect_uri='  + encodeURIComponent(redirectUri)
     + '&response_type=code'
     + '&approval_prompt=auto'
-    + '&scope=activity%3Aread_all%2Cactivity%3Awrite';
+    + '&scope=read%2Cactivity%3Aread_all%2Cactivity%3Awrite';
 }
 
 function exchangeCodeForTokens(code) {
@@ -246,19 +246,19 @@ function landingPage() {
   `);
 }
 
-function setupPage(stravaEmail) {
+function setupPage(sessionId, stravaEmail) {
   return page('One more step', `
     <div class="icon">📧</div>
     <h1>One more step</h1>
     <p>Strava connected for <b>${stravaEmail}</b>.</p>
     <p>What email address do your parkrun results get sent to? This may be different from your Strava email.</p>
     <form method="POST" action="/save-email">
-      <input type="hidden" name="stravaEmail" value="${stravaEmail}">
+      <input type="hidden" name="sessionId" value="${sessionId}">
       <label for="parkrunEmail">Parkrun results email</label>
       <input type="email" id="parkrunEmail" name="parkrunEmail" placeholder="you@example.com" required>
+      <p class="note" style="text-align:left;margin-bottom:16px">This is the address parkrun sends your weekly results to.</p>
       <button type="submit" class="btn">Save &amp; finish</button>
     </form>
-    <p class="note">This is the address parkrun sends your weekly results to.</p>
   `);
 }
 
@@ -306,22 +306,26 @@ const server = http.createServer(async (req, res) => {
     try {
       const data    = await exchangeCodeForTokens(params.code);
       const athlete = await fetchAthleteProfile(data.access_token);
-      const stravaEmail = athlete.email;
+      const stravaEmail = (athlete.email || '').toLowerCase().trim();
 
       if (!stravaEmail) {
-        return html(errorPage('Your Strava account does not have a verified email. Please add one at strava.com/settings/profile and try again.'));
+        return html(errorPage('Could not retrieve your email from Strava. Please ensure your Strava account has a verified email at strava.com/settings/profile and try again.'));
       }
 
-      // Store tokens temporarily until parkrun email is confirmed
-      pending[stravaEmail] = {
+      // Generate a session ID to track this pending registration
+      const sessionId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+
+      // Store tokens and strava email temporarily keyed by session ID
+      pending[sessionId] = {
+        stravaEmail,
         accessToken:  data.access_token,
         refreshToken: data.refresh_token,
         expiresAt:    data.expires_at,
         athleteId:    athlete.id,
       };
 
-      // Ask user for their parkrun email
-      return html(setupPage(stravaEmail));
+      // Ask user for their parkrun email only
+      return html(setupPage(sessionId, stravaEmail));
 
     } catch (err) {
       console.error('Callback error:', err.message);
@@ -332,18 +336,20 @@ const server = http.createServer(async (req, res) => {
   // Save parkrun email and finalise registration
   if (pathname === '/save-email' && req.method === 'POST') {
     try {
-      const body        = await parseBody(req);
-      const stravaEmail = body.stravaEmail;
+      const body         = await parseBody(req);
+      const sessionId    = body.sessionId;
       const parkrunEmail = (body.parkrunEmail || '').toLowerCase().trim();
 
-      if (!stravaEmail || !parkrunEmail) {
-        return html(errorPage('Missing email address. Please go back and try again.'));
+      if (!sessionId || !parkrunEmail) {
+        return html(errorPage('Missing details. Please go back and try again.'));
       }
 
-      const tokens = pending[stravaEmail];
+      const tokens = pending[sessionId];
       if (!tokens) {
         return html(errorPage('Session expired. Please <a href="/">start again</a>.'));
       }
+
+      const stravaEmail = tokens.stravaEmail;
 
       // Send everything to Apps Script
       await sendToAppsScript({
@@ -356,7 +362,7 @@ const server = http.createServer(async (req, res) => {
       });
 
       // Clean up pending store
-      delete pending[stravaEmail];
+      delete pending[sessionId];
 
       return html(donePage(parkrunEmail));
 
