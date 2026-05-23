@@ -247,16 +247,18 @@ function landingPage() {
 }
 
 function setupPage(sessionId, stravaEmail) {
+  const stravaEmailValue = stravaEmail || '';
   return page('One more step', `
     <div class="icon">📧</div>
     <h1>One more step</h1>
-    <p>Strava connected for <b>${stravaEmail}</b>.</p>
-    <p>What email address do your parkrun results get sent to? This may be different from your Strava email.</p>
+    <p>Strava connected! Please confirm your details below.</p>
     <form method="POST" action="/save-email">
       <input type="hidden" name="sessionId" value="${sessionId}">
-      <label for="parkrunEmail">Parkrun results email</label>
+      <label for="stravaEmail">Your Strava account email</label>
+      <input type="email" id="stravaEmail" name="stravaEmail" value="${stravaEmailValue}" placeholder="you@strava.com" required style="margin-bottom:16px">
+      <label for="parkrunEmail">Your parkrun results email</label>
       <input type="email" id="parkrunEmail" name="parkrunEmail" placeholder="you@example.com" required>
-      <p class="note" style="text-align:left;margin-bottom:16px">This is the address parkrun sends your weekly results to.</p>
+      <p class="note" style="text-align:left;margin-bottom:16px">These can be the same or different addresses.</p>
       <button type="submit" class="btn">Save &amp; finish</button>
     </form>
   `);
@@ -306,16 +308,13 @@ const server = http.createServer(async (req, res) => {
     try {
       const data    = await exchangeCodeForTokens(params.code);
       const athlete = await fetchAthleteProfile(data.access_token);
+      // Email may or may not be returned depending on Strava account settings
       const stravaEmail = (athlete.email || '').toLowerCase().trim();
-
-      if (!stravaEmail) {
-        return html(errorPage('Could not retrieve your email from Strava. Please ensure your Strava account has a verified email at strava.com/settings/profile and try again.'));
-      }
 
       // Generate a session ID to track this pending registration
       const sessionId = Date.now().toString(36) + Math.random().toString(36).slice(2);
 
-      // Store tokens and strava email temporarily keyed by session ID
+      // Store tokens temporarily — stravaEmail may be empty, user can fill it in
       pending[sessionId] = {
         stravaEmail,
         accessToken:  data.access_token,
@@ -324,7 +323,7 @@ const server = http.createServer(async (req, res) => {
         athleteId:    athlete.id,
       };
 
-      // Ask user for their parkrun email only
+      // Show setup page — pre-fill strava email if we got it, otherwise user types it
       return html(setupPage(sessionId, stravaEmail));
 
     } catch (err) {
@@ -349,7 +348,11 @@ const server = http.createServer(async (req, res) => {
         return html(errorPage('Session expired. Please <a href="/">start again</a>.'));
       }
 
-      const stravaEmail = tokens.stravaEmail;
+      // Use email from form — either pre-filled by API or typed manually by user
+      const stravaEmail = (body.stravaEmail || '').toLowerCase().trim();
+      if (!stravaEmail) {
+        return html(errorPage('Please enter your Strava email address.'));
+      }
 
       // Send everything to Apps Script
       await sendToAppsScript({
